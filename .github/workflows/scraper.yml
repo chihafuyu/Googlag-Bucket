@@ -1,0 +1,85 @@
+name: Googlag Scraper
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: googlag-scraper
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  download-and-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: 'pip'
+
+      - name: Install Python Dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Install Apkeep via Cargo
+        run: |
+          cargo install apkeep --version 1.0.0 --locked
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Prepare Output Directory
+        run: |
+          rm -rf Release_Output
+          mkdir -p Release_Output
+
+      - name: Execute Downloader
+        env:
+          PLAY_EMAIL: ${{ secrets.PLAY_EMAIL }}
+          PLAY_AAS_TOKEN: ${{ secrets.PLAY_AAS_TOKEN }}
+          DEVICE_B64: ${{ secrets.DEVICE_B64 }}
+        run: python main.py
+
+      - name: Validate Output & Generate Checksums
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          
+          if ! find Release_Output -type f -print -quit | grep -q .; then
+            echo "::error::Release_Output is empty. No APK downloaded."
+            exit 1
+          fi
+          
+          (
+            cd Release_Output
+            find . -maxdepth 1 -type f ! -name 'SHA256SUMS' -print0 |
+              sort -z |
+              xargs -0 sha256sum
+          ) > Release_Output/SHA256SUMS
+
+      - name: Generate Unique Release Tag
+        id: tag_gen
+        run: |
+          echo "TAG_NAME=build-${GITHUB_RUN_ID}" >> $GITHUB_OUTPUT
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag_gen.outputs.TAG_NAME }}
+          target_commitish: ${{ github.sha }}
+          name: "Googlag Artifacts - ${{ steps.tag_gen.outputs.TAG_NAME }}"
+          files: Release_Output/*
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,81 @@
+name: Global Artifact & Log Eradication
+
+on:
+  schedule:
+    - cron: '0 5,17 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: global-eradication
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  nuke_everything:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    steps:
+      - name: Annihilate All Releases and Tags
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          
+          echo "[INFO] Commencing total wipeout of all releases and tags..."
+          
+          RELEASES=$(gh release list --limit 1000 --json tagName -q '.[].tagName')
+          
+          if [ -z "$RELEASES" ]; then
+            echo "[INFO] Repository is already clean of releases."
+          else
+            FAILED=0
+            for TAG in $RELEASES; do
+              echo "[ACTION] Obliterating release and tag: $TAG"
+              if ! gh release delete "$TAG" --cleanup-tag --yes; then
+                echo "[WARN] Failed to delete $TAG." >&2
+                FAILED=$((FAILED + 1))
+              fi
+            done
+            
+            if [ "$FAILED" -gt 0 ]; then
+              echo "[ERROR] $FAILED release(s) could not be deleted." >&2
+              exit 1
+            fi
+            echo "[SUCCESS] All existing releases and tags purged."
+          fi
+
+      - name: Eradicate All Completed Workflow Runs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          
+          echo "[INFO] Initiating global purge of all completed workflow execution logs..."
+          
+          RUN_IDS=$(gh run list --status completed --limit 1000 --json databaseId -q '.[].databaseId')
+          
+          if [ -z "$RUN_IDS" ]; then
+            echo "[INFO] No completed workflow logs found."
+          else
+            FAILED=0
+            for RUN_ID in $RUN_IDS; do
+              echo "[ACTION] Deleting completed run ID: $RUN_ID"
+              if ! gh api \
+                --method DELETE \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                /repos/${{ github.repository }}/actions/runs/$RUN_ID > /dev/null 2>&1; then
+                echo "[WARN] Failed to delete run $RUN_ID." >&2
+                FAILED=$((FAILED + 1))
+              fi
+            done
+            
+            if [ "$FAILED" -gt 0 ]; then
+              echo "[ERROR] $FAILED workflow run(s) could not be deleted." >&2
+              exit 1
+            fi
+            echo "[SUCCESS] Completed workflow history wiped clean."
+          fi
