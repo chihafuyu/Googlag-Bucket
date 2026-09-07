@@ -35,10 +35,33 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           pip install -r requirements.txt
 
-      - name: Install Apkeep via Cargo
+      - name: Fetch Precompiled Apkeep
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cargo install apkeep --version 1.0.0 --locked
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          set -Eeuo pipefail
+          
+          APKEEP_VERSION='1.0.0'
+          APKEEP_ASSET='apkeep-x86_64-unknown-linux-gnu'
+          APKEEP_URL="https://github.com/EFForg/apkeep/releases/download/${APKEEP_VERSION}/${APKEEP_ASSET}"
+
+          wget -q --show-progress --https-only "$APKEEP_URL" -O apkeep
+
+          EXPECTED_SHA256="$(
+            gh api "repos/EFForg/apkeep/releases/tags/${APKEEP_VERSION}" \
+              --jq '.assets[] | select(.name == "'"$APKEEP_ASSET"'") | .digest' \
+              | sed 's/^sha256://'
+          )"
+
+          if [ -z "$EXPECTED_SHA256" ] || ! printf '%s  %s\n' "$EXPECTED_SHA256" apkeep | sha256sum --check --status; then
+            echo "::error::apkeep SHA-256 verification failed"
+            rm -f apkeep
+            exit 1
+          fi
+
+          chmod 0755 apkeep
+          sudo install -m 0755 apkeep /usr/local/bin/apkeep
+          rm -f apkeep
 
       - name: Prepare Output Directory
         run: |
