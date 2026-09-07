@@ -1,2 +1,2 @@
-pandas==2.2.1
-androguard==3.3.5
+pandas
+androguard
