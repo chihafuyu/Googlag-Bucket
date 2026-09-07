@@ -1,6 +1,8 @@
 app_name,package_name,arch
+Honor of Kings,com.levelinfinite.sgameGlobal,arm64-v8a
+Mobile Legends: Bang Bang,com.mobile.legends,arm64-v8a
 Super Bear Adventure,com.Earthkwak.Platformer,arm64-v8a
-Telegram,org.telegram.messenger,arm64-v8a
 WhatsApp,com.whatsapp,arm64-v8a
+X,com.twitter.android,arm64-v8a
 YouTube,com.google.android.youtube,arm64-v8a
 YouTube Music,com.google.android.apps.youtube.music,arm64-v8a
