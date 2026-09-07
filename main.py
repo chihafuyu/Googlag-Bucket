@@ -42,16 +42,20 @@ def extract_version_name(file_path: str) -> str:
 
         # Split APK bundle processing (APKS or XAPK formats)
         if file_path.endswith('.apks') or file_path.endswith('.xapk'):
-            # Extract the base APK from the split bundle to read the manifest
+            # Iterate dynamically over all internal APKs to find the primary manifest
             with ZipFile(file_path, 'r') as bundle:
-                base_apk_name = next(
-                    (f for f in bundle.namelist() if "base.apk" in f or "base.master.apk" in f),
-                    None
-                )
-                if base_apk_name:
-                    apk_data = bundle.read(base_apk_name)
-                    apk_obj = APK(apk_data, raw=True)
-                    return str(apk_obj.get_androidversion_name())
+                internal_apks = [f for f in bundle.namelist() if f.endswith('.apk')]
+                for apk_name in internal_apks:
+                    try:
+                        apk_data = bundle.read(apk_name)
+                        apk_obj = APK(apk_data, raw=True)
+                        version_name = apk_obj.get_androidversion_name()
+                        if version_name:
+                            return str(version_name)
+                    except (ValueError, KeyError, IndexError, TypeError):
+                        # Safely bypass configuration splits or invalid artifacts
+                        # that do not contain standard version manifest components.
+                        continue
 
     except (ValueError, OSError, KeyError, ImportError) as err:
         print(f"[WARN] Version parsing failed for {file_path}: {err}")

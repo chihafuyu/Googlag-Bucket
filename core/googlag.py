@@ -28,6 +28,19 @@ class GooglagDownloader:
         self.aas_token = aas_token
         self.device_b64 = device_b64
 
+    def verify_environment(self) -> bool:
+        """
+        Validates the execution environment to ensure all external dependencies
+        required by the downloader are present in the system.
+
+        Returns:
+            bool: True if dependencies are satisfied, False otherwise.
+        """
+        if shutil.which("apkeep") is None:
+            print("[FATAL] The 'apkeep' binary was not found in the system PATH.")
+            return False
+        return True
+
     def _find_and_package_apk(self, tmp_dir: str, dl_dir: str, pkg_name: str) -> Optional[str]:
         """
         Finds the downloaded artifact and packages split APKs if necessary.
@@ -72,7 +85,7 @@ class GooglagDownloader:
         """
         Constructs the apkeep CLI command string with dynamic device properties.
         """
-        # Note: The '-d google-play' argument remains unchanged because the 
+        # Note: The '-d google-play' argument remains unchanged because the
         # apkeep upstream binary strictly requires this identifier to function.
         cmd = [
             "apkeep",
@@ -81,7 +94,7 @@ class GooglagDownloader:
             "-e", self.email,
             "-t", self.aas_token
         ]
-        
+
         options = ["split_apk=true"]
 
         if self.device_b64:
@@ -95,7 +108,7 @@ class GooglagDownloader:
 
         cmd.extend(["-o", ",".join(options)])
         cmd.append(tmp_dir)
-        
+
         return cmd
 
     def download(self, pkg_name: str, output_dir: str) -> Optional[str]:
@@ -124,7 +137,7 @@ class GooglagDownloader:
                 if not copied_file:
                     print(f"[WARN] No valid APK payload found for {pkg_name}.")
                     return None
-                    
+
                 return copied_file
 
             except OSError as err:
