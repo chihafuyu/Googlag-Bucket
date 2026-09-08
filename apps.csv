@@ -1,6 +1,6 @@
 app_name,package_name,arch
+Google Photos,com.google.android.apps.photos,arm64-v8a
 Honor of Kings,com.levelinfinite.sgameGlobal,arm64-v8a
-Mobile Legends: Bang Bang,com.mobile.legends,arm64-v8a
 Super Bear Adventure,com.Earthkwak.Platformer,arm64-v8a
 WhatsApp,com.whatsapp,arm64-v8a
 X,com.twitter.android,arm64-v8a
