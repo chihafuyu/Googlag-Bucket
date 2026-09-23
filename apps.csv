@@ -1,6 +1,6 @@
 package_name,upload_target
 com.Earthkwak.Platformer,github
 com.google.android.apps.photos,github
-com.ss.android.ugc.trill,huggingface
 com.twitter.android,github
+com.zhiliaoapp.musically,huggingface
 net.quetta.browser,github
