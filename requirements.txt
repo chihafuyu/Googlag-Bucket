@@ -1,2 +1,3 @@
-pandas
 androguard
+huggingface-hub
+pandas

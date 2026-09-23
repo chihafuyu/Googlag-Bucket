@@ -1,6 +1,7 @@
+---
 name: Googlag Scraper
 
-on:
+"on":
   workflow_dispatch:
 
 concurrency:
@@ -14,7 +15,7 @@ jobs:
   download-and-release:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    
+
     permissions:
       contents: write
 
@@ -40,20 +41,29 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -Eeuo pipefail
-          
+
           APKEEP_VERSION='1.0.0'
           APKEEP_ASSET='apkeep-x86_64-unknown-linux-gnu'
-          APKEEP_URL="https://github.com/EFForg/apkeep/releases/download/${APKEEP_VERSION}/${APKEEP_ASSET}"
+          APKEEP_REPO="EFForg/apkeep"
+          BASE="https://github.com/${APKEEP_REPO}/releases/download"
+          APKEEP_URL="${BASE}/${APKEEP_VERSION}/${APKEEP_ASSET}"
 
           wget -q --show-progress --https-only "$APKEEP_URL" -O apkeep
 
+          API="repos/${APKEEP_REPO}/releases/tags/${APKEEP_VERSION}"
+
+          # Splitting the jq query string to satisfy the 80 character limit
+          JQ_QUERY='.assets[] | select(.name == "'"$APKEEP_ASSET"'") | .digest'
+
           EXPECTED_SHA256="$(
-            gh api "repos/EFForg/apkeep/releases/tags/${APKEEP_VERSION}" \
-              --jq '.assets[] | select(.name == "'"$APKEEP_ASSET"'") | .digest' \
+            gh api "$API" \
+              --jq "$JQ_QUERY" \
               | sed 's/^sha256://'
           )"
 
-          if [ -z "$EXPECTED_SHA256" ] || ! printf '%s  %s\n' "$EXPECTED_SHA256" apkeep | sha256sum --check --status; then
+          if [ -z "$EXPECTED_SHA256" ] || \
+             ! printf '%s  %s\n' "$EXPECTED_SHA256" apkeep | \
+             sha256sum --check --status; then
             echo "::error::apkeep SHA-256 verification failed"
             rm -f apkeep
             exit 1
@@ -73,31 +83,40 @@ jobs:
           PLAY_EMAIL: ${{ secrets.PLAY_EMAIL }}
           PLAY_AAS_TOKEN: ${{ secrets.PLAY_AAS_TOKEN }}
           DEVICE_B64: ${{ secrets.DEVICE_B64 }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_DATASET_ID: ${{ secrets.HF_DATASET_ID }}
         run: python main.py
 
       - name: Validate Output & Generate Checksums
+        id: validate
         shell: bash
         run: |
           set -Eeuo pipefail
-          
-          if ! find Release_Output -type f -print -quit | grep -q .; then
-            echo "::error::Release_Output is empty. No APK downloaded."
-            exit 1
+
+          if ! find Release_Output -type f \
+               \( -name '*.apk' -o -name '*.apks' \) \
+               -print -quit | grep -q .; then
+            echo "[INFO] No local artifacts remain. Skipping release."
+            echo "has_artifacts=false" >> $GITHUB_OUTPUT
+          else
+            echo "[INFO] Local artifacts found. Generating checksums..."
+            (
+              cd Release_Output
+              find . -maxdepth 1 -type f ! -name 'SHA256SUMS' -print0 |
+                sort -z |
+                xargs -0 sha256sum
+            ) > Release_Output/SHA256SUMS
+            echo "has_artifacts=true" >> $GITHUB_OUTPUT
           fi
-          
-          (
-            cd Release_Output
-            find . -maxdepth 1 -type f ! -name 'SHA256SUMS' -print0 |
-              sort -z |
-              xargs -0 sha256sum
-          ) > Release_Output/SHA256SUMS
 
       - name: Generate Unique Release Tag
+        if: steps.validate.outputs.has_artifacts == 'true'
         id: tag_gen
         run: |
           echo "TAG_NAME=build-${GITHUB_RUN_ID}" >> $GITHUB_OUTPUT
 
       - name: Publish GitHub Release
+        if: steps.validate.outputs.has_artifacts == 'true'
         uses: softprops/action-gh-release@v3.0.3
         with:
           tag_name: ${{ steps.tag_gen.outputs.TAG_NAME }}
