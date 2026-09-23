@@ -70,7 +70,7 @@ def handle_artifact_routing(final_path: str, final_filename: str, target: str) -
             if not HF_AVAILABLE:
                 print("[WARN] HF_TOKEN found but huggingface_hub missing. Skipping upload.")
             else:
-                print(f"[INFO] Uploading artifact to HuggingFace: {hf_dataset}")
+                print(f"[INFO] Uploading {final_filename} to HuggingFace: {hf_dataset}")
                 try:
                     api = HfApi(token=hf_token)
                     api.upload_file(
@@ -79,9 +79,10 @@ def handle_artifact_routing(final_path: str, final_filename: str, target: str) -
                         repo_id=hf_dataset,
                         repo_type="dataset"
                     )
-                    print("[SUCCESS] Artifact uploaded to HuggingFace.")
-                except (ValueError, OSError, RuntimeError) as err:
-                    print(f"[ERROR] HuggingFace upload failed: {err}")
+                    print("[SUCCESS] Artifact uploaded to HuggingFace securely.")
+                except (ValueError, OSError, RuntimeError, ConnectionError) as err:
+                    # Elegantly catching network timeouts, missing files, and API validation errors
+                    print(f"[ERROR] HuggingFace upload sequence failed: {err}")
         else:
             print("[WARN] HuggingFace credentials missing. Skipping upload.")
 

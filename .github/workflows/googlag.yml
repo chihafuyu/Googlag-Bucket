@@ -85,6 +85,7 @@ jobs:
           DEVICE_B64: ${{ secrets.DEVICE_B64 }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_DATASET_ID: ${{ secrets.HF_DATASET_ID }}
+          HF_XET_HIGH_PERFORMANCE: 1
         run: python main.py
 
       - name: Validate Output & Generate Checksums
