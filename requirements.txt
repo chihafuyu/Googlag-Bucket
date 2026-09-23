@@ -1,3 +1,4 @@
 androguard
 huggingface_hub[hf_transfer]
 pandas
+requests
