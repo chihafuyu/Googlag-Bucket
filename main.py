@@ -1,7 +1,7 @@
 """
 Main Execution Script.
 Reads target applications from a CSV, downloads them via Googlag Bucket,
-normalizes filenames, and dynamically routes artifacts to GitHub and/or Hugging Face.
+normalizes filenames, and dynamically routes artifacts to GitHub and/or HuggingFace.
 """
 
 import os
@@ -15,7 +15,7 @@ try:
 except ImportError:
     from androguard.core.bytecodes.apk import APK
 
-# Gracefully handle the optional Hugging Face dependency
+# Gracefully handle the optional HuggingFace dependency
 try:
     from huggingface_hub import HfApi
     HF_AVAILABLE = True
@@ -57,7 +57,7 @@ def extract_version_name(file_path: str) -> str:
 
 def handle_artifact_routing(final_path: str, final_filename: str, target: str) -> None:
     """
-    Routes the artifact to Hugging Face and manages local file cleanup for GitHub.
+    Routes the artifact to HuggingFace and manages local file cleanup for GitHub.
     """
     upload_to_hf = target in ('both', 'huggingface')
     keep_for_github = target in ('both', 'github')
@@ -70,7 +70,7 @@ def handle_artifact_routing(final_path: str, final_filename: str, target: str) -
             if not HF_AVAILABLE:
                 print("[WARN] HF_TOKEN found but huggingface_hub missing. Skipping upload.")
             else:
-                print(f"[INFO] Uploading artifact to Hugging Face: {hf_dataset}")
+                print(f"[INFO] Uploading artifact to HuggingFace: {hf_dataset}")
                 try:
                     api = HfApi(token=hf_token)
                     api.upload_file(
@@ -79,15 +79,15 @@ def handle_artifact_routing(final_path: str, final_filename: str, target: str) -
                         repo_id=hf_dataset,
                         repo_type="dataset"
                     )
-                    print("[SUCCESS] Artifact uploaded to Hugging Face.")
+                    print("[SUCCESS] Artifact uploaded to HuggingFace.")
                 except (ValueError, OSError, RuntimeError) as err:
-                    print(f"[ERROR] Hugging Face upload failed: {err}")
+                    print(f"[ERROR] HuggingFace upload failed: {err}")
         else:
-            print("[WARN] Hugging Face credentials missing. Skipping upload.")
+            print("[WARN] HuggingFace credentials missing. Skipping upload.")
 
     if not keep_for_github:
         print(
-            f"[INFO] Target is Hugging Face only. "
+            f"[INFO] Target is HuggingFace only. "
             f"Removing {final_filename} from GitHub release pool."
         )
         try:
