@@ -50,9 +50,11 @@ def get_working_proxy() -> str:
             return ""
 
         random.shuffle(proxy_data)
-        print(f"[INFO] Testing {min(10, len(proxy_data))} proxy candidates...")
 
-        for entry in proxy_data[:10]:
+        limit_test = min(30, len(proxy_data))
+        print(f"[INFO] Testing {limit_test} proxy candidates...")
+
+        for entry in proxy_data[:limit_test]:
             ip_addr = str(entry.get("ip", ""))
             port = str(entry.get("port", ""))
 
@@ -66,9 +68,8 @@ def get_working_proxy() -> str:
             }
 
             try:
-                # Target the exact checkin API to ensure the proxy can handle the auth handshake
                 checkin_url = "https://android.clients.google.com/checkin"
-                requests.get(checkin_url, proxies=test_proxies, timeout=5)
+                requests.get(checkin_url, proxies=test_proxies, timeout=8)
                 print(f"[SUCCESS] Active proxy secured: {proxy_str}")
                 return proxy_str
             except (requests.exceptions.RequestException, ValueError):
