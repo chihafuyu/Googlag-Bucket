@@ -34,6 +34,9 @@ SecureMessenger,com.secure.msg,arm64-v8a
 CloudDrive,com.cloud.storage,armeabi-v7a
 ```
 
+### 3. Credits
+- [ProxyScrape](https://github.com/ProxyScrape/free-proxy-list) - for providing free proxy list
+
 ## License
 
 Distributed under the **MIT License**

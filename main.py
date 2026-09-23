@@ -29,9 +29,9 @@ from core.googlag import GooglagDownloader
 
 def get_working_proxy() -> str:
     """
-    Fetches free Indonesian proxies from a GitHub repository, tests them,
-    and returns the first working proxy address.
-    Returns an empty string if none are viable.
+    Fetches free Indonesian proxies from a GitHub repository, tests them
+    against the specific Google Play checkin endpoint, and returns the first 
+    working proxy address. Returns an empty string if none are viable.
     """
     url = (
         "https://raw.githubusercontent.com/ProxyScrape/"
@@ -66,7 +66,9 @@ def get_working_proxy() -> str:
             }
 
             try:
-                requests.get("https://play.google.com", proxies=test_proxies, timeout=5)
+                # Target the exact checkin API to ensure the proxy can handle the auth handshake
+                checkin_url = "https://android.clients.google.com/checkin"
+                requests.get(checkin_url, proxies=test_proxies, timeout=5)
                 print(f"[SUCCESS] Active proxy secured: {proxy_str}")
                 return proxy_str
             except (requests.exceptions.RequestException, ValueError):
