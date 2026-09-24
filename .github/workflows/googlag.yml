@@ -80,12 +80,14 @@ jobs:
 
       - name: Execute Downloader
         env:
-          PLAY_EMAIL: ${{ secrets.PLAY_EMAIL }}
-          PLAY_AAS_TOKEN: ${{ secrets.PLAY_AAS_TOKEN }}
           DEVICE_B64: ${{ secrets.DEVICE_B64 }}
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          FERNET_KEY: ${{ secrets.FERNET_KEY }}
           HF_DATASET_ID: ${{ secrets.HF_DATASET_ID }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_XET_HIGH_PERFORMANCE: 1
+          PLAY_AAS_TOKEN: ${{ secrets.PLAY_AAS_TOKEN }}
+          PLAY_EMAIL: ${{ secrets.PLAY_EMAIL }}
+          ZIP_PASSWORD: ${{ secrets.ZIP_PASSWORD }}
         run: python main.py
 
       - name: Validate Output & Generate Checksums

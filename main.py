@@ -9,8 +9,7 @@ import sys
 import time
 import random
 import hashlib
-import base64
-import binascii
+import uuid
 from zipfile import ZipFile
 import requests
 import pandas as pd
@@ -21,12 +20,26 @@ try:
 except ImportError:
     from androguard.core.bytecodes.apk import APK
 
+# Handle symmetric encryption for package name obfuscation
+try:
+    from cryptography.fernet import Fernet, InvalidToken
+    FERNET_AVAILABLE = True
+except ImportError:
+    FERNET_AVAILABLE = False
+
 # Gracefully handle the optional HuggingFace dependency
 try:
     from huggingface_hub import HfApi
     HF_AVAILABLE = True
 except ImportError:
     HF_AVAILABLE = False
+
+# Handle optional AES-256 ZIP encryption dependency
+try:
+    import pyzipper
+    PYZIPPER_AVAILABLE = True
+except ImportError:
+    PYZIPPER_AVAILABLE = False
 
 from core.googlag import GooglagDownloader
 
@@ -163,39 +176,98 @@ def handle_artifact_routing(final_path: str, final_filename: str, target: str) -
             print(f"[WARN] Failed to purge artifact locally: {err}")
 
 
+def _decrypt_package(raw_target: str, obfuscate: bool) -> str:
+    """Decrypts the package name using Fernet if obfuscation is enabled."""
+    if not obfuscate:
+        return raw_target
+    if not FERNET_AVAILABLE or not os.getenv("FERNET_KEY"):
+        print("[ERROR] Cryptography module or FERNET_KEY missing.")
+        return ""
+    try:
+        return Fernet(os.getenv("FERNET_KEY").encode('utf-8')).decrypt(
+            raw_target.encode('utf-8')
+        ).decode('utf-8')
+    except InvalidToken:
+        print("[WARN] Invalid Fernet token. Decryption failed.")
+        return ""
+
+
+def _normalize_filename(
+    dl_path: str, real_pkg: str, output_dir: str, obfuscate: bool
+) -> str:
+    """Generates the final filename, applying SHA-256 hashing if obfuscated."""
+    version = extract_version_name(dl_path)
+    ext = '.apks' if dl_path.endswith('.apks') else '.apk'
+
+    if obfuscate:
+        hash_str = hashlib.sha256(
+            f"{real_pkg}_{version}".encode('utf-8')
+        ).hexdigest()[:16]
+        pkg_name = f"secure_build_{hash_str}"
+    else:
+        pkg_name = f"{real_pkg}_{version}"
+
+    final_path = os.path.join(output_dir, f"{pkg_name}{ext}")
+    os.replace(dl_path, final_path)
+    return final_path
+
+
+def _encrypt_artifact(final_path: str, output_dir: str) -> str:
+    """Encrypts the downloaded artifact into an AES-256 ZIP vault."""
+    zip_pwd = os.getenv("ZIP_PASSWORD")
+    if not zip_pwd or not PYZIPPER_AVAILABLE:
+        print("[ERROR] ZIP config missing. Aborting encryption.")
+        os.remove(final_path)
+        return ""
+
+    vault_path = os.path.join(output_dir, f"vault_{uuid.uuid4().hex[:12]}.zip")
+    try:
+        with pyzipper.AESZipFile(
+            vault_path, 'w',
+            compression=pyzipper.ZIP_DEFLATED,
+            encryption=pyzipper.WZ_AES
+        ) as vault:
+            vault.setpassword(zip_pwd.encode('utf-8'))
+            vault.write(final_path, os.path.basename(final_path))
+        os.remove(final_path)
+        return vault_path
+    except OSError as err:
+        print(f"[ERROR] Encryption failed: {err}")
+        return ""
+
+
 def process_target_app(
     row: pd.Series, downloader: GooglagDownloader, output_dir: str, proxy: str
 ) -> None:
     """
     Processes a single application entry, manages dynamic proxy injection with
-    a guided auto-retry mechanism, triggers the download, and normalizes the filename.
+    a guided auto-retry mechanism, triggers the download, and encrypts the artifact.
     """
     use_proxy = str(row.get('use_proxy', 'false')).strip().lower() in ('true', 'yes', '1', 'y')
     obfuscate = str(row.get('obfuscate', 'false')).strip().lower() in ('true', 'yes', '1', 'y')
-    pkg_name = str(row['package_name']).strip()
+    target = str(row.get('upload_target', 'both')).strip().lower()
 
-    try:
-        real_pkg = base64.b64decode(pkg_name).decode('utf-8') if obfuscate else pkg_name
-    except (ValueError, TypeError, binascii.Error):
-        print(f"[WARN] Invalid Base64 string for obfuscated target: {pkg_name}")
+    real_pkg = _decrypt_package(str(row['package_name']).strip(), obfuscate)
+    if not real_pkg:
         return
 
     if str(row.get('skip', 'false')).strip().lower() in ('true', 'yes', '1', 'y'):
-        print(f"\n[INFO] Skipping: {pkg_name[:8] if obfuscate else pkg_name}")
+        print(f"\n[INFO] Skipping: {'Encrypted_Target' if obfuscate else real_pkg}")
         return
 
-    print(f"\n[INFO] Processing: {pkg_name[:8] if obfuscate else pkg_name}")
+    print(f"\n[INFO] Processing: {'Encrypted_Target' if obfuscate else real_pkg}")
 
-    for attempt in range(1, 4 if use_proxy else 2):
-        if use_proxy and proxy:
-            os.environ["http_proxy"] = f"http://{proxy}"
-            os.environ["https_proxy"] = f"http://{proxy}"
+    active_proxy = proxy
+    max_attempts = 4 if use_proxy else 2
+
+    for attempt in range(1, max_attempts):
+        if use_proxy and active_proxy:
+            os.environ["http_proxy"] = f"http://{active_proxy}"
+            os.environ["https_proxy"] = f"http://{active_proxy}"
             print(f"[INFO] Proxy tunneling enabled (Attempt {attempt})")
         else:
             os.environ.pop("http_proxy", None)
             os.environ.pop("https_proxy", None)
-            if use_proxy and not proxy:
-                print(f"[WARN] Proxy requested but unavailable (Attempt {attempt})")
 
         dl_path = downloader.download(real_pkg, output_dir)
 
@@ -203,45 +275,38 @@ def process_target_app(
         os.environ.pop("https_proxy", None)
 
         if not dl_path:
-            if attempt < (3 if use_proxy else 1):
+            if attempt < (max_attempts - 1):
                 print("[WARN] Download failed. Cooldown 30s...")
                 time.sleep(30)
-                proxy = get_working_proxy()
+                active_proxy = get_working_proxy()
                 continue
-            return
+            break
 
-        pkg_name = f"{real_pkg}_{extract_version_name(dl_path)}"
-        if obfuscate:
-            pkg_name = f"secure_build_{hashlib.sha256(pkg_name.encode('utf-8')).hexdigest()[:16]}"
-
-        final_path = os.path.join(
-            output_dir,
-            f"{pkg_name}{'.apks' if dl_path.endswith('.apks') else '.apk'}"
-        )
-        os.replace(dl_path, final_path)
+        final_path = _normalize_filename(dl_path, real_pkg, output_dir, obfuscate)
 
         try:
             if os.path.getsize(final_path) < 1048576:
                 print(f"[WARN] Artifact {os.path.basename(final_path)} is suspiciously small.")
                 os.remove(final_path)
-                if attempt < (3 if use_proxy else 1):
+                if attempt < (max_attempts - 1):
                     print("[WARN] Discarded payload. Cooldown 30s...")
                     time.sleep(30)
-                    proxy = get_working_proxy()
+                    active_proxy = get_working_proxy()
                     continue
                 print("[ERROR] Max retries exhausted.")
-                return
+                break
         except OSError as err:
             print(f"[WARN] Verification failed: {err}")
-            return
+            break
 
-        print(f"[SUCCESS] Saved primary artifact: {os.path.basename(final_path)}")
-        handle_artifact_routing(
-            final_path,
-            os.path.basename(final_path),
-            str(row.get('upload_target', 'both')).strip().lower()
-        )
-        return
+        if obfuscate:
+            final_path = _encrypt_artifact(final_path, output_dir)
+            if not final_path:
+                break
+
+        print(f"[SUCCESS] Saved artifact: {os.path.basename(final_path)}")
+        handle_artifact_routing(final_path, os.path.basename(final_path), target)
+        break
 
 
 def main() -> None:
