@@ -6,6 +6,7 @@ normalizes filenames, and dynamically routes artifacts with selective proxying.
 
 import os
 import sys
+import time
 import random
 from zipfile import ZipFile
 import requests
@@ -29,9 +30,9 @@ from core.googlag import GooglagDownloader
 
 def get_working_proxy() -> str:
     """
-    Fetches free Indonesian proxies from a GitHub repository, tests them
-    against the specific Google Play checkin endpoint, and returns the first 
-    working proxy address. Returns an empty string if none are viable.
+    Fetches free Indonesian proxies from a GitHub repository, sorts them by lowest
+    latency, tests them against the specific Google Play checkin endpoint, 
+    and returns the first working proxy address. Returns an empty string if none are viable.
     """
     url = (
         "https://raw.githubusercontent.com/ProxyScrape/"
@@ -49,19 +50,20 @@ def get_working_proxy() -> str:
         if not proxy_data:
             return ""
 
-        random.shuffle(proxy_data)
+        valid_proxies = [p for p in proxy_data if p.get("ip") and p.get("port")]
+        valid_proxies.sort(key=lambda x: int(x.get("latency_ms") or 99999))
 
-        limit_test = min(30, len(proxy_data))
-        print(f"[INFO] Testing {limit_test} proxy candidates...")
+        top_candidates = valid_proxies[:50]
+        random.shuffle(top_candidates)
 
-        for entry in proxy_data[:limit_test]:
-            ip_addr = str(entry.get("ip", ""))
-            port = str(entry.get("port", ""))
+        limit_test = min(30, len(top_candidates))
+        print(f"[INFO] Testing {limit_test} low-latency proxy candidates...")
 
-            if not ip_addr or not port:
-                continue
-
+        for entry in top_candidates[:limit_test]:
+            ip_addr = str(entry.get("ip"))
+            port = str(entry.get("port"))
             proxy_str = f"{ip_addr}:{port}"
+
             test_proxies = {
                 "http": f"http://{proxy_str}",
                 "https": f"http://{proxy_str}"
@@ -70,7 +72,11 @@ def get_working_proxy() -> str:
             try:
                 checkin_url = "https://android.clients.google.com/checkin"
                 requests.get(checkin_url, proxies=test_proxies, timeout=8)
-                print(f"[SUCCESS] Active proxy secured: {proxy_str}")
+                latency = entry.get('latency_ms', 'Unknown')
+                print(
+                    f"[SUCCESS] Active proxy secured: {proxy_str} "
+                    f"(Latency: {latency}ms)"
+                )
                 return proxy_str
             except (requests.exceptions.RequestException, ValueError):
                 continue
@@ -155,11 +161,11 @@ def handle_artifact_routing(final_path: str, final_filename: str, target: str) -
 
 
 def process_target_app(
-    row: pd.Series, downloader: GooglagDownloader, output_dir: str, active_proxy: str
+    row: pd.Series, downloader: GooglagDownloader, output_dir: str, initial_proxy: str
 ) -> None:
     """
-    Processes a single application entry, manages dynamic proxy injection,
-    triggers the download, and normalizes the filename.
+    Processes a single application entry, manages dynamic proxy injection with
+    a guided auto-retry mechanism, triggers the download, and normalizes the filename.
     """
     pkg_name = str(row['package_name'])
 
@@ -172,45 +178,70 @@ def process_target_app(
 
     print(f"\n[INFO] Processing: {pkg_name} (Target: {target}, Proxy: {requires_proxy})")
 
-    if requires_proxy and active_proxy:
-        os.environ["http_proxy"] = f"http://{active_proxy}"
-        os.environ["https_proxy"] = f"http://{active_proxy}"
-        print(f"[INFO] Proxy tunneling enabled for {pkg_name}.")
-    else:
+    active_proxy = initial_proxy
+    max_retries = 3 if requires_proxy else 1
+
+    for attempt in range(1, max_retries + 1):
+        if requires_proxy and active_proxy:
+            os.environ["http_proxy"] = f"http://{active_proxy}"
+            os.environ["https_proxy"] = f"http://{active_proxy}"
+            print(
+                f"[INFO] Proxy tunneling enabled: {active_proxy} "
+                f"(Attempt {attempt}/{max_retries})"
+            )
+        else:
+            os.environ.pop("http_proxy", None)
+            os.environ.pop("https_proxy", None)
+            if requires_proxy and not active_proxy:
+                print(
+                    f"[WARN] Proxy requested but unavailable "
+                    f"(Attempt {attempt}/{max_retries})."
+                )
+
+        dl_path = downloader.download(pkg_name, output_dir)
+
         os.environ.pop("http_proxy", None)
         os.environ.pop("https_proxy", None)
-        if requires_proxy and not active_proxy:
-            print("[WARN] Proxy requested but unavailable. Proceeding directly.")
 
-    dl_path = downloader.download(pkg_name, output_dir)
-
-    os.environ.pop("http_proxy", None)
-    os.environ.pop("https_proxy", None)
-
-    if not dl_path:
-        return
-
-    # Inline parsing to minimize local variables for strict linting rules
-    final_filename = (
-        f"{pkg_name}_{extract_version_name(dl_path)}"
-        f"{'.apks' if dl_path.endswith('.apks') else '.apk'}"
-    )
-    final_path = os.path.join(output_dir, final_filename)
-
-    os.replace(dl_path, final_path)
-
-    try:
-        if os.path.getsize(final_path) < 1048576:
-            print(f"[WARN] Artifact {final_filename} is suspiciously small.")
-            print("[WARN] Discarding corrupted payload (likely a dropped proxy connection).")
-            os.remove(final_path)
+        if not dl_path:
+            if attempt < max_retries and requires_proxy:
+                print(
+                    "[WARN] Download failed. "
+                    "Initiating 30-second cooldown before retry..."
+                )
+                time.sleep(30)
+                active_proxy = get_working_proxy()
+                continue
             return
-    except OSError as err:
-        print(f"[WARN] Failed to verify artifact integrity: {err}")
-        return
 
-    print(f"[SUCCESS] Saved primary artifact: {final_filename}")
-    handle_artifact_routing(final_path, final_filename, target)
+        final_path = os.path.join(
+            output_dir,
+            f"{pkg_name}_{extract_version_name(dl_path)}"
+            f"{'.apks' if dl_path.endswith('.apks') else '.apk'}"
+        )
+        os.replace(dl_path, final_path)
+
+        try:
+            if os.path.getsize(final_path) < 1048576:
+                print(f"[WARN] Artifact {os.path.basename(final_path)} is suspiciously small.")
+                os.remove(final_path)
+                if attempt < max_retries and requires_proxy:
+                    print(
+                        "[WARN] Discarded payload. "
+                        "Initiating 30-second cooldown before retry..."
+                    )
+                    time.sleep(30)
+                    active_proxy = get_working_proxy()
+                    continue
+                print("[ERROR] Max retries exhausted. Abandoning download.")
+                return
+        except OSError as err:
+            print(f"[WARN] Failed to verify artifact integrity: {err}")
+            return
+
+        print(f"[SUCCESS] Saved primary artifact: {os.path.basename(final_path)}")
+        handle_artifact_routing(final_path, os.path.basename(final_path), target)
+        return
 
 
 def main() -> None:
@@ -248,11 +279,9 @@ def main() -> None:
         active_apps = target_apps
 
     if 'use_proxy' in active_apps.columns:
-        proxy_needed = active_apps['use_proxy'].astype(str).str.strip().str.lower().isin(
+        if active_apps['use_proxy'].astype(str).str.strip().str.lower().isin(
             ['true', 'yes', '1', 'y']
-        ).any()
-
-        if proxy_needed:
+        ).any():
             active_proxy = get_working_proxy()
 
     downloader = GooglagDownloader(email, aas, dev_b64)
