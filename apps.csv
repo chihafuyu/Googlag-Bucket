@@ -1,7 +1,6 @@
-package_name,upload_target,use_proxy,skip
-com.Earthkwak.Platformer,github,false,true
-com.google.android.apps.photos,github,false,true
-com.ss.android.ugc.trill,huggingface,true,false
-com.twitter.android,github,false,true
-com.zhiliaoapp.musically,huggingface,false,true
-net.quetta.browser,github,true,true
+package_name,upload_target,use_proxy,skip,obfuscate
+com.Earthkwak.Platformer,github,false,true,false
+com.google.android.apps.photos,github,false,true,false
+com.twitter.android,github,false,true,false
+com.zhiliaoapp.musically,huggingface,false,true,false
+net.quetta.browser,github,true,true,false

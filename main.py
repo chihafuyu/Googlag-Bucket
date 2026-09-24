@@ -8,6 +8,9 @@ import os
 import sys
 import time
 import random
+import hashlib
+import base64
+import binascii
 from zipfile import ZipFile
 import requests
 import pandas as pd
@@ -161,63 +164,59 @@ def handle_artifact_routing(final_path: str, final_filename: str, target: str) -
 
 
 def process_target_app(
-    row: pd.Series, downloader: GooglagDownloader, output_dir: str, initial_proxy: str
+    row: pd.Series, downloader: GooglagDownloader, output_dir: str, proxy: str
 ) -> None:
     """
     Processes a single application entry, manages dynamic proxy injection with
     a guided auto-retry mechanism, triggers the download, and normalizes the filename.
     """
-    pkg_name = str(row['package_name'])
+    use_proxy = str(row.get('use_proxy', 'false')).strip().lower() in ('true', 'yes', '1', 'y')
+    obfuscate = str(row.get('obfuscate', 'false')).strip().lower() in ('true', 'yes', '1', 'y')
+    pkg_name = str(row['package_name']).strip()
 
-    if str(row.get('skip', 'false')).strip().lower() in ('true', 'yes', '1', 'y'):
-        print(f"\n[INFO] Skipping: {pkg_name} (Skip Flag: Active)")
+    try:
+        real_pkg = base64.b64decode(pkg_name).decode('utf-8') if obfuscate else pkg_name
+    except (ValueError, TypeError, binascii.Error):
+        print(f"[WARN] Invalid Base64 string for obfuscated target: {pkg_name}")
         return
 
-    target = str(row.get('upload_target', 'both')).strip().lower()
-    requires_proxy = str(row.get('use_proxy', 'false')).strip().lower() in ('true', 'yes', '1', 'y')
+    if str(row.get('skip', 'false')).strip().lower() in ('true', 'yes', '1', 'y'):
+        print(f"\n[INFO] Skipping: {pkg_name[:8] if obfuscate else pkg_name}")
+        return
 
-    print(f"\n[INFO] Processing: {pkg_name} (Target: {target}, Proxy: {requires_proxy})")
+    print(f"\n[INFO] Processing: {pkg_name[:8] if obfuscate else pkg_name}")
 
-    active_proxy = initial_proxy
-    max_retries = 3 if requires_proxy else 1
-
-    for attempt in range(1, max_retries + 1):
-        if requires_proxy and active_proxy:
-            os.environ["http_proxy"] = f"http://{active_proxy}"
-            os.environ["https_proxy"] = f"http://{active_proxy}"
-            print(
-                f"[INFO] Proxy tunneling enabled: {active_proxy} "
-                f"(Attempt {attempt}/{max_retries})"
-            )
+    for attempt in range(1, 4 if use_proxy else 2):
+        if use_proxy and proxy:
+            os.environ["http_proxy"] = f"http://{proxy}"
+            os.environ["https_proxy"] = f"http://{proxy}"
+            print(f"[INFO] Proxy tunneling enabled (Attempt {attempt})")
         else:
             os.environ.pop("http_proxy", None)
             os.environ.pop("https_proxy", None)
-            if requires_proxy and not active_proxy:
-                print(
-                    f"[WARN] Proxy requested but unavailable "
-                    f"(Attempt {attempt}/{max_retries})."
-                )
+            if use_proxy and not proxy:
+                print(f"[WARN] Proxy requested but unavailable (Attempt {attempt})")
 
-        dl_path = downloader.download(pkg_name, output_dir)
+        dl_path = downloader.download(real_pkg, output_dir)
 
         os.environ.pop("http_proxy", None)
         os.environ.pop("https_proxy", None)
 
         if not dl_path:
-            if attempt < max_retries and requires_proxy:
-                print(
-                    "[WARN] Download failed. "
-                    "Initiating 30-second cooldown before retry..."
-                )
+            if attempt < (3 if use_proxy else 1):
+                print("[WARN] Download failed. Cooldown 30s...")
                 time.sleep(30)
-                active_proxy = get_working_proxy()
+                proxy = get_working_proxy()
                 continue
             return
 
+        pkg_name = f"{real_pkg}_{extract_version_name(dl_path)}"
+        if obfuscate:
+            pkg_name = f"secure_build_{hashlib.sha256(pkg_name.encode('utf-8')).hexdigest()[:16]}"
+
         final_path = os.path.join(
             output_dir,
-            f"{pkg_name}_{extract_version_name(dl_path)}"
-            f"{'.apks' if dl_path.endswith('.apks') else '.apk'}"
+            f"{pkg_name}{'.apks' if dl_path.endswith('.apks') else '.apk'}"
         )
         os.replace(dl_path, final_path)
 
@@ -225,22 +224,23 @@ def process_target_app(
             if os.path.getsize(final_path) < 1048576:
                 print(f"[WARN] Artifact {os.path.basename(final_path)} is suspiciously small.")
                 os.remove(final_path)
-                if attempt < max_retries and requires_proxy:
-                    print(
-                        "[WARN] Discarded payload. "
-                        "Initiating 30-second cooldown before retry..."
-                    )
+                if attempt < (3 if use_proxy else 1):
+                    print("[WARN] Discarded payload. Cooldown 30s...")
                     time.sleep(30)
-                    active_proxy = get_working_proxy()
+                    proxy = get_working_proxy()
                     continue
-                print("[ERROR] Max retries exhausted. Abandoning download.")
+                print("[ERROR] Max retries exhausted.")
                 return
         except OSError as err:
-            print(f"[WARN] Failed to verify artifact integrity: {err}")
+            print(f"[WARN] Verification failed: {err}")
             return
 
         print(f"[SUCCESS] Saved primary artifact: {os.path.basename(final_path)}")
-        handle_artifact_routing(final_path, os.path.basename(final_path), target)
+        handle_artifact_routing(
+            final_path,
+            os.path.basename(final_path),
+            str(row.get('upload_target', 'both')).strip().lower()
+        )
         return
 
 
