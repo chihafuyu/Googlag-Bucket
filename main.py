@@ -163,27 +163,20 @@ def process_target_app(
     """
     pkg_name = str(row['package_name'])
 
-    # Intercept and evaluate skip logic immediately
-    skip_raw = str(row.get('skip', 'false')).strip().lower()
-    should_skip = skip_raw in ('true', 'yes', '1', 'y')
-
-    if should_skip:
+    if str(row.get('skip', 'false')).strip().lower() in ('true', 'yes', '1', 'y'):
         print(f"\n[INFO] Skipping: {pkg_name} (Skip Flag: Active)")
         return
 
     target = str(row.get('upload_target', 'both')).strip().lower()
-    use_proxy_raw = str(row.get('use_proxy', 'false')).strip().lower()
-    requires_proxy = use_proxy_raw in ('true', 'yes', '1', 'y')
+    requires_proxy = str(row.get('use_proxy', 'false')).strip().lower() in ('true', 'yes', '1', 'y')
 
     print(f"\n[INFO] Processing: {pkg_name} (Target: {target}, Proxy: {requires_proxy})")
 
-    # Inject proxy dynamically if requested and available
     if requires_proxy and active_proxy:
         os.environ["http_proxy"] = f"http://{active_proxy}"
         os.environ["https_proxy"] = f"http://{active_proxy}"
         print(f"[INFO] Proxy tunneling enabled for {pkg_name}.")
     else:
-        # Ensure pure connection for non-proxy apps
         os.environ.pop("http_proxy", None)
         os.environ.pop("https_proxy", None)
         if requires_proxy and not active_proxy:
@@ -191,21 +184,32 @@ def process_target_app(
 
     dl_path = downloader.download(pkg_name, output_dir)
 
-    # Clean up environment variables immediately after the download attempt
     os.environ.pop("http_proxy", None)
     os.environ.pop("https_proxy", None)
 
     if not dl_path:
         return
 
-    version = extract_version_name(dl_path)
-    ext = ".apks" if dl_path.endswith(".apks") else ".apk"
-    final_filename = f"{pkg_name}_{version}{ext}"
+    # Inline parsing to minimize local variables for strict linting rules
+    final_filename = (
+        f"{pkg_name}_{extract_version_name(dl_path)}"
+        f"{'.apks' if dl_path.endswith('.apks') else '.apk'}"
+    )
     final_path = os.path.join(output_dir, final_filename)
 
     os.replace(dl_path, final_path)
-    print(f"[SUCCESS] Saved primary artifact: {final_filename}")
 
+    try:
+        if os.path.getsize(final_path) < 1048576:
+            print(f"[WARN] Artifact {final_filename} is suspiciously small.")
+            print("[WARN] Discarding corrupted payload (likely a dropped proxy connection).")
+            os.remove(final_path)
+            return
+    except OSError as err:
+        print(f"[WARN] Failed to verify artifact integrity: {err}")
+        return
+
+    print(f"[SUCCESS] Saved primary artifact: {final_filename}")
     handle_artifact_routing(final_path, final_filename, target)
 
 
@@ -235,7 +239,6 @@ def main() -> None:
 
     active_proxy = ""
 
-    # Filter active applications to determine if proxy acquisition is necessary
     if 'skip' in target_apps.columns:
         skip_mask = target_apps['skip'].astype(str).str.strip().str.lower().isin(
             ['true', 'yes', '1', 'y']
@@ -244,7 +247,6 @@ def main() -> None:
     else:
         active_apps = target_apps
 
-    # Only fetch a proxy if at least one active app requires it
     if 'use_proxy' in active_apps.columns:
         proxy_needed = active_apps['use_proxy'].astype(str).str.strip().str.lower().isin(
             ['true', 'yes', '1', 'y']
