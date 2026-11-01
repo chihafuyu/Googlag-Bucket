@@ -13,4 +13,5 @@ com.facebook.orca,github,false,true,false
 com.facebook.katana,github,false,true,false
 com.instagram.barcelona,github,false,true,false
 com.instagram.android,github,false,true,false
-com.nokoprint,huggingface,false,false,false
+com.nokoprint,huggingface,false,true,false
+com.twitter.android,huggingface,false,false,false
