@@ -120,7 +120,7 @@ jobs:
 
       - name: Publish GitHub Release
         if: steps.validate.outputs.has_artifacts == 'true'
-        uses: softprops/action-gh-release@v3.0.3
+        uses: softprops/action-gh-release@v3.0.4
         with:
           tag_name: ${{ steps.tag_gen.outputs.TAG_NAME }}
           target_commitish: ${{ github.sha }}
